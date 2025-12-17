@@ -52,6 +52,9 @@ secrets/
 *.key
 *.pfx
 
+# Deployment info (generated during deployment)
+.deployment-info.json
+
 # Test results
 TestResults/
 *.trx
