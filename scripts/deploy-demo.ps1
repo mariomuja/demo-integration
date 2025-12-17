@@ -187,6 +187,14 @@ Write-Success "Resource Group verified with $($resources.Count) resources"
 Write-Host "  Resources:" -ForegroundColor Gray
 $resources | ForEach-Object { Write-Host "    - $($_.Name) ($($_.Type))" -ForegroundColor Gray }
 
+# Verify Function App exists (created by Bicep)
+$functionAppResource = $resources | Where-Object { $_.Type -eq "Microsoft.Web/sites" }
+if (-not $functionAppResource) {
+    Write-Error-Custom "Function App not found in resources. Bicep deployment may have failed."
+    exit 1
+}
+
+Write-Success "Function App resource found: $($functionAppResource.Name)"
 Write-Success "Infrastructure deployed and verified"
 
 # Get outputs
