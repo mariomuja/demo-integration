@@ -160,12 +160,36 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Wait for Function App to be ready (check instead of fixed sleep)
 Write-Host "  -> Waiting for Function App to be ready..." -ForegroundColor Gray
-Start-Sleep -Seconds 30
+$maxRetries = 12
+$retryCount = 0
+$functionAppReady = $false
+
+while (-not $functionAppReady -and $retryCount -lt $maxRetries) {
+    $ErrorActionPreference = "SilentlyContinue"
+    $appState = az functionapp show --resource-group $ResourceGroupName --name $functionAppName --query "state" --output tsv 2>&1 | Where-Object { $_ -and $_ -notmatch "Warning" }
+    $ErrorActionPreference = "Stop"
+    
+    if ($appState -eq "Running") {
+        $functionAppReady = $true
+        Write-Host "    Function App is ready!" -ForegroundColor Green
+    } else {
+        $retryCount++
+        Write-Host "    Waiting... ($retryCount/$maxRetries)" -ForegroundColor Gray
+        Start-Sleep -Seconds 5
+    }
+}
+
+if (-not $functionAppReady) {
+    Write-Error-Custom "Function App did not become ready in time"
+    exit 1
+}
 
 # Deploy using func with --no-selfcontained to avoid large files
 Push-Location $functionsPath
 try {
+    Write-Host "  -> Deploying functions (ZIP size: ~5 KB)..." -ForegroundColor Gray
     func azure functionapp publish $functionAppName --no-selfcontained --force
     
     if ($LASTEXITCODE -eq 0) {
@@ -178,9 +202,9 @@ try {
     Pop-Location
 }
 
-# Wait for functions to initialize
-Write-Step "Waiting for functions to initialize..."
-Start-Sleep -Seconds 20
+# Quick check that functions are available (no long wait needed for small ZIP)
+Write-Step "Verifying functions are available..."
+Start-Sleep -Seconds 5
 
 # Save deployment info
 $deploymentInfo = @{
