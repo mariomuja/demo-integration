@@ -1,0 +1,17 @@
+{
+  "vendorId": "VENDOR-001",
+  "name": "Acme Corporation",
+  "email": "contact@acme.com",
+  "address": {
+    "street": "123 Business St",
+    "city": "New York",
+    "state": "NY",
+    "zipCode": "10001",
+    "country": "USA"
+  },
+  "contactPerson": "John Doe",
+  "phone": "+1-555-0101",
+  "status": "Active",
+  "registrationDate": "2024-01-15"
+}
+

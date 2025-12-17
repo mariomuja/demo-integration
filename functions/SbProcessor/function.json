@@ -1,0 +1,20 @@
+{
+  "bindings": [
+    {
+      "name": "queueItem",
+      "type": "serviceBusTrigger",
+      "direction": "in",
+      "queueName": "inbound",
+      "connection": "ServiceBusConnection"
+    },
+    {
+      "type": "blob",
+      "direction": "out",
+      "name": "outputBlob",
+      "path": "landing/vendors/{DateTime:yyyy}/{DateTime:MM}/{DateTime:dd}/{id}.json",
+      "connection": "AzureWebJobsStorage"
+    }
+  ],
+  "scriptFile": "run.ps1"
+}
+

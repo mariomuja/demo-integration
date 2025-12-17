@@ -1,0 +1,27 @@
+{
+  "bindings": [
+    {
+      "authLevel": "anonymous",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "Request",
+      "methods": [
+        "post"
+      ]
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "Response"
+    },
+    {
+      "type": "serviceBus",
+      "direction": "out",
+      "name": "outputMessage",
+      "connection": "ServiceBusConnection",
+      "queueName": "inbound"
+    }
+  ],
+  "scriptFile": "run.ps1"
+}
+

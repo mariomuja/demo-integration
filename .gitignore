@@ -1,0 +1,59 @@
+# Azure
+*.publishsettings
+*.azurePubxml
+*.pubxml
+*.publishproj
+
+# Local development
+local.settings.json
+.vscode/
+.idea/
+
+# Dependencies
+node_modules/
+packages/
+
+# Build outputs
+bin/
+obj/
+dist/
+out/
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+*.env.local
+*.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Azure Functions
+__blobstorage__
+__queuestorage__
+__azurite_db*__.json
+.python_packages/
+
+# Secrets
+secrets/
+*.pem
+*.key
+*.pfx
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+
