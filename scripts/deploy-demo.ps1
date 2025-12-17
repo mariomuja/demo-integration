@@ -254,17 +254,31 @@ if (-not $functionAppReady) {
     exit 1
 }
 
-# Deploy using func with --no-selfcontained to avoid large files
+# Deploy using func deploy (faster, no waiting for Function App to be fully ready)
 Push-Location $functionsPath
 try {
-    Write-Host "  -> Deploying functions (ZIP size: ~5 KB)..." -ForegroundColor Gray
-    func azure functionapp publish $functionAppName --no-selfcontained --force
+    Write-Host "  -> Deploying functions with func deploy..." -ForegroundColor Gray
+    Write-Host "     Function App: $functionAppName" -ForegroundColor Gray
+    Write-Host "     Resource Group: $ResourceGroupName" -ForegroundColor Gray
+    
+    # Use func deploy which is faster and doesn't require Function App to be fully ready
+    func azure functionapp deploy `
+        --resource-group $ResourceGroupName `
+        --name $functionAppName `
+        --force
     
     if ($LASTEXITCODE -eq 0) {
         Write-Success "Functions deployed"
     } else {
-        Write-Error-Custom "Function deployment failed"
-        exit 1
+        Write-Host "  -> Fallback: Trying func azure functionapp publish..." -ForegroundColor Yellow
+        func azure functionapp publish $functionAppName --no-selfcontained --force
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Functions deployed (fallback method)"
+        } else {
+            Write-Error-Custom "Function deployment failed"
+            exit 1
+        }
     }
 } finally {
     Pop-Location
