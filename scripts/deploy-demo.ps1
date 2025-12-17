@@ -18,7 +18,7 @@ param(
     [string]$ResourceGroupName = "rg-demo-integration-$(Get-Date -Format 'yyyyMMdd-HHmmss')",
     
     [Parameter(Mandatory = $false)]
-    [string]$Location = "West Europe",
+    [string]$Location = "Central US",
     
     [Parameter(Mandatory = $false)]
     [string]$EnvironmentName = "dev"
