@@ -7,8 +7,11 @@ param resourcePrefix string
 @description('Environment name')
 param environmentName string
 
-// Service Bus namespace cannot end with '-sb' (reserved suffix)
-var namespaceName = toLower(resourcePrefix)
+// Service Bus namespace name (max 50 chars, alphanumeric and hyphens only, cannot end with '-sb')
+// Generate shorter name to ensure it fits
+var uniqueId = uniqueString(resourceGroup().id, subscription().id)
+var baseName = 'demo${substring(uniqueId, 0, min(20, length(uniqueId)))}'
+var namespaceName = toLower(baseName)
 
 resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
   name: namespaceName
