@@ -48,7 +48,53 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
       }
       actions: {
-        Process_message: {
+        Parse_message: {
+          type: 'ParseJson'
+          inputs: {
+            content: '@{triggerBody()?[\'Content\']}'
+            schema: {
+              type: 'object'
+              properties: {
+                id: {
+                  type: 'string'
+                }
+                correlationId: {
+                  type: 'string'
+                }
+                timestamp: {
+                  type: 'string'
+                }
+                source: {
+                  type: 'string'
+                }
+                data: {
+                  type: 'object'
+                }
+              }
+            }
+          }
+          runAfter: {}
+        }
+        Send_to_outbound_queue: {
+          type: 'ApiConnection'
+          inputs: {
+            host: {
+              connection: {
+                name: '@parameters(\'$connections\')[\'servicebus\'].connectionId'
+              }
+            }
+            method: 'post'
+            path: '/@{encodeURIComponent(\'outbound\')}/messages'
+            body: '@{body(\'Parse_message\')}'
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+          runAfter: {
+            Parse_message: ['Succeeded']
+          }
+        }
+        Complete_message: {
           type: 'ApiConnection'
           inputs: {
             host: {
@@ -62,7 +108,9 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               'lockToken': '@{triggerBody()?[\'ContentData\']}'
             }
           }
-          runAfter: {}
+          runAfter: {
+            Send_to_outbound_queue: ['Succeeded']
+          }
         }
       }
       parameters: {

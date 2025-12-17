@@ -32,16 +32,24 @@ if (-not $ResourceGroupName) {
     exit 1
 }
 
-# Get Function App name
-$functionAppName = az functionapp list --resource-group $ResourceGroupName --query "[0].name" --output tsv 2>&1 | Where-Object { $_ -and $_ -notmatch "Warning" -and $_ -notmatch "UserWarning" } | Select-Object -First 1
+# Get Function App name (filter out warnings)
+$ErrorActionPreference = "SilentlyContinue"
+$funcListOutput = az functionapp list --resource-group $ResourceGroupName --query "[0].name" --output tsv 2>&1
+$ErrorActionPreference = "Stop"
+$functionAppName = $funcListOutput | Where-Object { $_ -and $_ -notmatch "Warning" -and $_ -notmatch "UserWarning" -and $_ -match "^[a-z0-9-]+$" } | Select-Object -First 1
 
 if (-not $functionAppName -or $functionAppName -eq "") {
     Write-Host "Error: Function App not found in resource group $ResourceGroupName" -ForegroundColor Red
     Write-Host "Please ensure the deployment completed successfully." -ForegroundColor Yellow
+    Write-Host "`nTipp: Das Deployment kann 5-10 Minuten dauern. Bitte warten Sie noch etwas." -ForegroundColor Cyan
     exit 1
 }
 
-$functionApp = az functionapp show --resource-group $ResourceGroupName --name $functionAppName --output json 2>&1 | Where-Object { $_ -notmatch "Warning" -and $_ -notmatch "UserWarning" } | ConvertFrom-Json
+$ErrorActionPreference = "SilentlyContinue"
+$funcShowOutput = az functionapp show --resource-group $ResourceGroupName --name $functionAppName --output json 2>&1
+$ErrorActionPreference = "Stop"
+$jsonOutput = $funcShowOutput | Where-Object { $_ -notmatch "Warning" -and $_ -notmatch "UserWarning" } | Out-String
+$functionApp = $jsonOutput | ConvertFrom-Json
 $functionUrl = "https://$($functionApp.defaultHostName)/api/HttpIngest"
 
 # Sample vendor data
@@ -90,7 +98,16 @@ try {
     Write-Host "    Path: landing/vendors/$(Get-Date -Format 'yyyy/MM/dd')/$($response.messageId).json" -ForegroundColor Gray
     Start-Sleep -Seconds 2
     
-    Write-Transport "PIPELINE" "Data successfully processed!" "success"
+    Write-Transport "LOGIC APP" "Orchestrating workflow - forwarding to outbound queue..." "info"
+    Start-Sleep -Seconds 2
+    
+    Write-Transport "SERVICE BUS" "Message forwarded to 'outbound' queue..." "info"
+    Start-Sleep -Seconds 2
+    
+    Write-Transport "MOCK TARGET" "Receiving data at target system..." "info"
+    Start-Sleep -Seconds 2
+    
+    Write-Transport "PIPELINE" "Data successfully processed end-to-end!" "success"
     
 } catch {
     Write-Transport "ERROR" "Failed: $($_.Exception.Message)" "error"

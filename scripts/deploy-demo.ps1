@@ -141,10 +141,12 @@ $outputs = az deployment group show `
 $functionAppName = $outputs.functionAppName.value
 $storageAccountName = $outputs.storageAccountName.value
 $apimServiceName = $outputs.apimServiceName.value
+$logicAppName = $outputs.logicAppName.value
 
 Write-Success "Function App: $functionAppName"
 Write-Success "Storage Account: $storageAccountName"
 Write-Success "API Management: $apimServiceName"
+Write-Success "Logic App: $logicAppName"
 
 # Deploy functions
 Write-Step "Deploying Azure Functions..."
@@ -186,6 +188,7 @@ $deploymentInfo = @{
     FunctionAppName = $functionAppName
     StorageAccountName = $storageAccountName
     ApimServiceName = $apimServiceName
+    LogicAppName = $logicAppName
     DeploymentName = $deploymentName
 }
 

@@ -92,6 +92,7 @@ output functionAppHostName string = functionsApp.outputs.functionAppHostName
 output apimServiceName string = apim.outputs.apimServiceName
 output apimGatewayUrl string = apim.outputs.gatewayUrl
 output serviceBusNamespace string = serviceBus.outputs.namespaceName
+output logicAppName string = logicApp.outputs.logicAppName
 output appInsightsName string = appInsights.name
 output appInsightsInstrumentationKey string = appInsights.properties.InstrumentationKey
 
