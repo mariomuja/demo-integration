@@ -7,7 +7,8 @@ param resourcePrefix string
 @description('Environment name')
 param environmentName string
 
-var namespaceName = '${toLower(resourcePrefix)}-sb'
+// Service Bus namespace cannot end with '-sb' (reserved suffix)
+var namespaceName = toLower(resourcePrefix)
 
 resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
   name: namespaceName
