@@ -8,9 +8,11 @@ param resourcePrefix string
 param environmentName string
 
 // Storage account name (must be globally unique, lowercase, 3-24 chars)
-// Truncate to max 22 chars to leave room for 'sa' suffix
-var namePrefix = substring(toLower(resourcePrefix), 0, min(length(resourcePrefix), 22))
-var storageAccountName = '${namePrefix}sa'
+// Use uniqueString to ensure uniqueness and proper length
+var uniqueId = uniqueString(resourceGroup().id, subscription().id)
+var basePrefix = 'demo'
+var suffix = substring(uniqueId, 0, min(18, length(uniqueId))) // Max 18 chars for suffix
+var storageAccountName = '${basePrefix}${suffix}sa'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
