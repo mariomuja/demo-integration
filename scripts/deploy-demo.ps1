@@ -70,6 +70,27 @@ if ($bicepAvailable) {
     exit 1
 }
 
+# Clean up old demo resource groups
+Write-Step "Cleaning up old demo resource groups..."
+
+$ErrorActionPreference = "SilentlyContinue"
+$oldRgs = az group list --query "[?contains(name, 'rg-demo-integration-')].{Name:name, Location:location}" --output json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = "Stop"
+
+if ($oldRgs -and $oldRgs.Count -gt 0) {
+    Write-Host "  Found $($oldRgs.Count) old resource group(s) to clean up" -ForegroundColor Gray
+    foreach ($oldRg in $oldRgs) {
+        if ($oldRg.Name -ne $ResourceGroupName) {
+            Write-Host "  -> Deleting: $($oldRg.Name)..." -ForegroundColor Gray -NoNewline
+            az group delete --name $oldRg.Name --yes --no-wait 2>$null | Out-Null
+            Write-Host " Done" -ForegroundColor Green
+        }
+    }
+    Write-Success "Old resource groups cleanup initiated"
+} else {
+    Write-Success "No old resource groups found"
+}
+
 # Create resource group
 Write-Step "Creating resource group: $ResourceGroupName"
 
@@ -124,27 +145,30 @@ Write-Success "API Management: $apimServiceName"
 Write-Step "Deploying Azure Functions..."
 
 $functionsPath = Join-Path (Split-Path $PSScriptRoot -Parent) "functions"
-$tempZip = New-TemporaryFile
-Remove-Item $tempZip -Force
-$tempZip = "$tempZip.zip"
 
-Compress-Archive -Path "$functionsPath\*" -DestinationPath $tempZip -Force
+# Check if func CLI is available
+$funcCheck = func --version 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Error-Custom "Azure Functions Core Tools not found. Install with: npm install -g azure-functions-core-tools@4"
+    exit 1
+}
 
 Write-Host "  -> Waiting for Function App to be ready..." -ForegroundColor Gray
 Start-Sleep -Seconds 30
 
-az functionapp deployment source config-zip `
-    --resource-group $ResourceGroupName `
-    --name $functionAppName `
-    --src $tempZip | Out-Null
-
-Remove-Item $tempZip -Force
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Success "Functions deployed"
-} else {
-    Write-Error-Custom "Function deployment failed"
-    exit 1
+# Deploy using func with --no-selfcontained to avoid large files
+Push-Location $functionsPath
+try {
+    func azure functionapp publish $functionAppName --no-selfcontained --force
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Functions deployed"
+    } else {
+        Write-Error-Custom "Function deployment failed"
+        exit 1
+    }
+} finally {
+    Pop-Location
 }
 
 # Wait for functions to initialize
