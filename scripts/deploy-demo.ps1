@@ -70,23 +70,28 @@ if ($bicepAvailable) {
     exit 1
 }
 
-# Clean up old demo resource groups
+# Clean up old demo resource groups (only those belonging to this repo)
 Write-Step "Cleaning up old demo resource groups..."
 
 $ErrorActionPreference = "SilentlyContinue"
-$oldRgs = az group list --query "[?contains(name, 'rg-demo-integration-')].{Name:name, Location:location}" --output json 2>$null | ConvertFrom-Json
+# Only find resource groups that match the exact pattern for this demo-integration repo
+$oldRgs = az group list --query "[?starts_with(name, 'rg-demo-integration-')].{Name:name, Location:location}" --output json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = "Stop"
 
 if ($oldRgs -and $oldRgs.Count -gt 0) {
-    Write-Host "  Found $($oldRgs.Count) old resource group(s) to clean up" -ForegroundColor Gray
+    Write-Host "  Found $($oldRgs.Count) old resource group(s) belonging to demo-integration" -ForegroundColor Gray
     foreach ($oldRg in $oldRgs) {
         if ($oldRg.Name -ne $ResourceGroupName) {
             Write-Host "  -> Deleting: $($oldRg.Name)..." -ForegroundColor Gray -NoNewline
             az group delete --name $oldRg.Name --yes --no-wait 2>$null | Out-Null
-            Write-Host " Done" -ForegroundColor Green
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host " Done" -ForegroundColor Green
+            } else {
+                Write-Host " Failed" -ForegroundColor Yellow
+            }
         }
     }
-    Write-Success "Old resource groups cleanup initiated"
+    Write-Success "Old demo-integration resource groups cleanup initiated"
 } else {
     Write-Success "No old resource groups found"
 }
