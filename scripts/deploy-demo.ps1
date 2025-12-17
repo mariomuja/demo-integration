@@ -116,6 +116,7 @@ Write-Step "Deploying infrastructure with Bicep..."
 $deploymentName = "demo-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 $deploymentPath = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "infra") "main.bicep"
 
+Write-Host "  -> Starting Bicep deployment (this can take 5-10 minutes)..." -ForegroundColor Gray
 az deployment group create `
     --resource-group $ResourceGroupName `
     --name $deploymentName `
@@ -127,6 +128,38 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error-Custom "Infrastructure deployment failed"
     exit 1
 }
+
+# Wait for deployment to complete
+Write-Host "  -> Waiting for Bicep deployment to complete..." -ForegroundColor Gray
+$maxWait = 600 # 10 minutes
+$elapsed = 0
+$deploymentSucceeded = $false
+
+while ($elapsed -lt $maxWait -and -not $deploymentSucceeded) {
+    $ErrorActionPreference = "SilentlyContinue"
+    $state = az deployment group show --resource-group $ResourceGroupName --name $deploymentName --query "properties.provisioningState" --output tsv 2>&1 | Where-Object { $_ -and $_ -notmatch "Warning" }
+    $ErrorActionPreference = "Stop"
+    
+    if ($state -eq "Succeeded") {
+        $deploymentSucceeded = $true
+        Write-Host "    Bicep deployment completed!" -ForegroundColor Green
+    } elseif ($state -eq "Failed") {
+        Write-Error-Custom "Bicep deployment failed"
+        exit 1
+    } else {
+        $minutes = [math]::Floor($elapsed / 60)
+        $seconds = $elapsed % 60
+        Write-Host "    [$minutes min $seconds s] Deployment status: $state" -ForegroundColor Gray
+        Start-Sleep -Seconds 30
+        $elapsed += 30
+    }
+}
+
+if (-not $deploymentSucceeded) {
+    Write-Error-Custom "Bicep deployment did not complete in time"
+    exit 1
+}
+
 Write-Success "Infrastructure deployed"
 
 # Get outputs
