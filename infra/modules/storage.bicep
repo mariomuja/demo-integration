@@ -8,7 +8,9 @@ param resourcePrefix string
 param environmentName string
 
 // Storage account name (must be globally unique, lowercase, 3-24 chars)
-var storageAccountName = '${toLower(resourcePrefix)}sa'
+// Truncate to max 22 chars to leave room for 'sa' suffix
+var namePrefix = substring(toLower(resourcePrefix), 0, min(length(resourcePrefix), 22))
+var storageAccountName = '${namePrefix}sa'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -25,10 +27,16 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
+// Blob service
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+  name: 'default'
+  parent: storageAccount
+}
+
 // Container for landing zone
 resource landingContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   name: 'landing'
-  parent: storageAccount::blobServices
+  parent: blobService
   properties: {
     publicAccess: 'None'
     metadata: {
@@ -41,7 +49,7 @@ resource landingContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
 // Container for processed data
 resource processedContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   name: 'processed'
-  parent: storageAccount::blobServices
+  parent: blobService
   properties: {
     publicAccess: 'None'
     metadata: {

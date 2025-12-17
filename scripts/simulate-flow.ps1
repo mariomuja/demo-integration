@@ -32,8 +32,16 @@ if (-not $ResourceGroupName) {
     exit 1
 }
 
-$deploymentInfo = Get-Content "$PSScriptRoot\..\.deployment-info.json" | ConvertFrom-Json
-$functionApp = az functionapp show --resource-group $ResourceGroupName --name $deploymentInfo.FunctionAppName --output json | ConvertFrom-Json
+# Get Function App name
+$functionAppName = az functionapp list --resource-group $ResourceGroupName --query "[0].name" --output tsv 2>&1 | Where-Object { $_ -and $_ -notmatch "Warning" -and $_ -notmatch "UserWarning" } | Select-Object -First 1
+
+if (-not $functionAppName -or $functionAppName -eq "") {
+    Write-Host "Error: Function App not found in resource group $ResourceGroupName" -ForegroundColor Red
+    Write-Host "Please ensure the deployment completed successfully." -ForegroundColor Yellow
+    exit 1
+}
+
+$functionApp = az functionapp show --resource-group $ResourceGroupName --name $functionAppName --output json 2>&1 | Where-Object { $_ -notmatch "Warning" -and $_ -notmatch "UserWarning" } | ConvertFrom-Json
 $functionUrl = "https://$($functionApp.defaultHostName)/api/HttpIngest"
 
 # Sample vendor data
