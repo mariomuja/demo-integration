@@ -110,7 +110,7 @@ if (-not $rg) {
 }
 Write-Success "Resource group created"
 
-# Deploy infrastructure
+# Deploy infrastructure with Bicep
 Write-Step "Deploying infrastructure with Bicep..."
 
 $deploymentName = "demo-deployment-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -125,12 +125,14 @@ az deployment group create `
     --output json | Out-Null
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error-Custom "Infrastructure deployment failed"
+    Write-Error-Custom "Bicep deployment failed to start"
     exit 1
 }
 
+Write-Success "Bicep deployment started"
+
 # Wait for deployment to complete
-Write-Host "  -> Waiting for Bicep deployment to complete..." -ForegroundColor Gray
+Write-Step "Waiting for Bicep deployment to complete..."
 $maxWait = 600 # 10 minutes
 $elapsed = 0
 $deploymentSucceeded = $false
@@ -145,11 +147,13 @@ while ($elapsed -lt $maxWait -and -not $deploymentSucceeded) {
         Write-Host "    Bicep deployment completed!" -ForegroundColor Green
     } elseif ($state -eq "Failed") {
         Write-Error-Custom "Bicep deployment failed"
+        $errorDetails = az deployment group show --resource-group $ResourceGroupName --name $deploymentName --query "properties.error" --output json 2>&1 | Where-Object { $_ -notmatch "Warning" }
+        Write-Host "Error details: $errorDetails" -ForegroundColor Red
         exit 1
     } else {
         $minutes = [math]::Floor($elapsed / 60)
         $seconds = $elapsed % 60
-        Write-Host "    [$minutes min $seconds s] Deployment status: $state" -ForegroundColor Gray
+        Write-Host "    [$minutes min $seconds s] Status: $state" -ForegroundColor Gray
         Start-Sleep -Seconds 30
         $elapsed += 30
     }
@@ -160,7 +164,30 @@ if (-not $deploymentSucceeded) {
     exit 1
 }
 
-Write-Success "Infrastructure deployed"
+# Verify Resource Group and resources exist
+Write-Step "Verifying Resource Group and resources..."
+
+$ErrorActionPreference = "SilentlyContinue"
+$rgExists = az group show --name $ResourceGroupName --query "name" --output tsv 2>&1 | Where-Object { $_ -and $_ -notmatch "Warning" }
+$ErrorActionPreference = "Stop"
+
+if (-not $rgExists) {
+    Write-Error-Custom "Resource Group not found after deployment"
+    exit 1
+}
+
+$resources = az resource list --resource-group $ResourceGroupName --query "[].{Name:name, Type:type}" --output json 2>&1 | Where-Object { $_ -notmatch "Warning" } | ConvertFrom-Json
+
+if (-not $resources -or $resources.Count -eq 0) {
+    Write-Error-Custom "No resources found in Resource Group after deployment"
+    exit 1
+}
+
+Write-Success "Resource Group verified with $($resources.Count) resources"
+Write-Host "  Resources:" -ForegroundColor Gray
+$resources | ForEach-Object { Write-Host "    - $($_.Name) ($($_.Type))" -ForegroundColor Gray }
+
+Write-Success "Infrastructure deployed and verified"
 
 # Get outputs
 Write-Step "Retrieving deployment outputs..."
