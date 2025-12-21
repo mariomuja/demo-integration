@@ -1,0 +1,99 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": {
+      "defaultValue": {},
+      "type": "Object"
+    }
+  },
+  "triggers": {
+    "When_messages_arrive_in_queue": {
+      "type": "ApiConnection",
+      "inputs": {
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['servicebus'].connectionId"
+          }
+        },
+        "method": "get",
+        "path": "/@{encodeURIComponent('inbound')}/messages/head",
+        "queries": {
+          "queueType": "Main",
+          "maxMessageCount": 1
+        }
+      },
+      "recurrence": {
+        "frequency": "Second",
+        "interval": 10
+      }
+    }
+  },
+  "actions": {
+    "Parse_message": {
+      "type": "ParseJson",
+      "inputs": {
+        "content": "@{triggerBody()?['Content']}",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "correlationId": {
+              "type": "string"
+            },
+            "timestamp": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "data": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "runAfter": {}
+    },
+    "Send_to_outbound_queue": {
+      "type": "ApiConnection",
+      "inputs": {
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['servicebus'].connectionId"
+          }
+        },
+        "method": "post",
+        "path": "/@{encodeURIComponent('outbound')}/messages",
+        "body": "@{body('Parse_message')}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "runAfter": {
+        "Parse_message": ["Succeeded"]
+      }
+    },
+    "Complete_message": {
+      "type": "ApiConnection",
+      "inputs": {
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['servicebus'].connectionId"
+          }
+        },
+        "method": "post",
+        "path": "/@{encodeURIComponent('inbound')}/messages/@{encodeURIComponent(triggerBody()?['ContentData'])}/complete",
+        "queries": {
+          "lockToken": "@{triggerBody()?['ContentData']}"
+        }
+      },
+      "runAfter": {
+        "Send_to_outbound_queue": ["Succeeded"]
+      }
+    }
+  }
+}
+
