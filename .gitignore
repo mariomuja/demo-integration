@@ -6,7 +6,7 @@
 
 # Local development
 local.settings.json
-.vscode/
+
 .idea/
 
 # Dependencies
@@ -59,4 +59,11 @@ secrets/
 TestResults/
 *.trx
 *.coverage
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+.terraform.lock.hcl
 
