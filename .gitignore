@@ -65,5 +65,4 @@ TestResults/
 *.tfstate.*
 *.tfplan
 .terraform/
-.terraform.lock.hcl
 

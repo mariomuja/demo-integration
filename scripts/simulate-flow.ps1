@@ -7,7 +7,9 @@
 
 param(
     [string]$ResourceGroupName = (Get-Content "$PSScriptRoot\..\.deployment-info.json" -ErrorAction SilentlyContinue | ConvertFrom-Json).ResourceGroupName,
-    [int]$DelaySeconds = 5
+    [int]$DelaySeconds = 5,
+    [switch]$StartLocalServices,
+    [switch]$StopLocalServices = $false
 )
 
 $ErrorActionPreference = "Continue"
@@ -144,8 +146,6 @@ function Test-RequiredTools {
     Write-Host "                    Checking Required Tools and Dependencies" -ForegroundColor White
     Write-Host "=================================================================================" -ForegroundColor Cyan
     Write-Host ""
-    
-    $allToolsAvailable = $true
     
     # Check PowerShell version
     Write-Host "  Checking PowerShell..." -ForegroundColor Cyan
@@ -348,13 +348,355 @@ function Write-Transport {
     Start-Sleep -Seconds $DelaySeconds
 }
 
+# Load local queue simulation
+$localQueueModule = Join-Path $PSScriptRoot "local-queue.ps1"
+if (Test-Path $localQueueModule) {
+    . $localQueueModule
+    Write-Host "  [INFO] Local queue simulation loaded" -ForegroundColor DarkGray
+} else {
+    Write-Host "  [WARN] Local queue module not found - queue operations will be simulated" -ForegroundColor Yellow
+}
+
+# Helper function to invoke SbProcessor locally
+function Invoke-SbProcessorLocal {
+    param([string]$MessageJson, [string]$FunctionUrl)
+    
+    try {
+        $MessageJson | ConvertFrom-Json | Out-Null
+        
+        # Call SbProcessor function directly via HTTP (if available)
+        $sbProcessorUrl = $FunctionUrl -replace "/HttpIngest$", "/SbProcessor"
+        
+        try {
+            Write-Host "      Calling SbProcessor function..." -ForegroundColor DarkGray
+            Invoke-RestMethod -Uri $sbProcessorUrl `
+                -Method POST `
+                -Body $MessageJson `
+                -ContentType "application/json" `
+                -TimeoutSec 10 `
+                -ErrorAction Stop | Out-Null
+            return $true
+        } catch {
+            # If direct call fails, simulate processing
+            Write-Host "      SbProcessor not available - simulating processing..." -ForegroundColor DarkGray
+            return $false
+        }
+    } catch {
+        Write-Host "      Error invoking SbProcessor: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+# Helper function to save to blob storage (Azurite)
+function Save-ToBlobStorage {
+    param(
+        [string]$MessageId,
+        [string]$ProcessedDataJson,
+        [string]$CorrelationId
+    )
+    
+    try {
+        # Check if Azurite is available
+        $azuriteUrl = "http://127.0.0.1:10000/devstoreaccount1"
+        try {
+            Invoke-WebRequest -Uri "$azuriteUrl" -Method Head -TimeoutSec 2 -ErrorAction Stop | Out-Null
+        } catch {
+            # Azurite not running
+            return $false
+        }
+        
+        # Use Azure Storage PowerShell module or REST API
+        $containerName = "landing"
+        $blobPath = "vendors/$(Get-Date -Format 'yyyy/MM/dd')/$MessageId.json"
+        
+        # Try using Az.Storage module if available
+        if (Get-Module -ListAvailable -Name Az.Storage) {
+            Import-Module Az.Storage -ErrorAction SilentlyContinue
+            $ctx = New-AzStorageContext -ConnectionString "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+            
+            # Create container if it doesn't exist
+            $container = Get-AzStorageContainer -Name $containerName -Context $ctx -ErrorAction SilentlyContinue
+            if (-not $container) {
+                New-AzStorageContainer -Name $containerName -Context $ctx -Permission Blob | Out-Null
+            }
+            
+            # Upload blob
+            $blobContent = [System.Text.Encoding]::UTF8.GetBytes($ProcessedDataJson)
+            Set-AzStorageBlobContent -Container $containerName -Blob $blobPath -Content $blobContent -Context $ctx -Force | Out-Null
+            Write-Host "      [OK] Blob saved to Azurite: $containerName/$blobPath" -ForegroundColor Green
+            return $true
+        } else {
+            # Fallback: Use REST API
+            $date = (Get-Date).ToUniversalTime().ToString("R")
+            $canonicalizedHeaders = "x-ms-blob-type:BlockBlob`nx-ms-date:$date`nx-ms-version:2021-04-10"
+            $canonicalizedResource = "/devstoreaccount1/$containerName/$blobPath"
+            $stringToSign = "PUT`n`n`n$($ProcessedDataJson.Length)`n`n`ntext/plain`n`n`n`n`n`n$canonicalizedHeaders`n$canonicalizedResource"
+            
+            $hmacsha = New-Object System.Security.Cryptography.HMACSHA256
+            $hmacsha.Key = [System.Convert]::FromBase64String("Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")
+            $signature = $hmacsha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($stringToSign))
+            $signatureBase64 = [System.Convert]::ToBase64String($signature)
+            
+            $headers = @{
+                "x-ms-date" = $date
+                "x-ms-version" = "2021-04-10"
+                "x-ms-blob-type" = "BlockBlob"
+                "Authorization" = "SharedKey devstoreaccount1:$signatureBase64"
+            }
+            
+            $blobUrl = "$azuriteUrl/$containerName/$blobPath"
+            Invoke-RestMethod -Uri $blobUrl -Method Put -Body $ProcessedDataJson -Headers $headers -ContentType "text/plain" -ErrorAction Stop | Out-Null
+            Write-Host "      [OK] Blob saved to Azurite: $containerName/$blobPath" -ForegroundColor Green
+            return $true
+        }
+    } catch {
+        Write-Host "      [WARN] Could not save to blob storage: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+# Helper function to invoke MockTarget locally
+function Invoke-MockTargetLocal {
+    param([string]$MessageJson, [string]$FunctionUrl)
+    
+    try {
+        $MessageJson | ConvertFrom-Json | Out-Null
+        
+        # Call MockTarget function directly via HTTP (if available)
+        $mockTargetUrl = $FunctionUrl -replace "/HttpIngest$", "/MockTarget"
+        
+        try {
+            Write-Host "      Calling MockTarget function..." -ForegroundColor DarkGray
+            Invoke-RestMethod -Uri $mockTargetUrl `
+                -Method POST `
+                -Body $MessageJson `
+                -ContentType "application/json" `
+                -TimeoutSec 10 `
+                -ErrorAction Stop | Out-Null
+            return $true
+        } catch {
+            # If direct call fails, simulate
+            Write-Host "      MockTarget not available - simulating delivery..." -ForegroundColor DarkGray
+            return $false
+        }
+    } catch {
+        Write-Host "      Error invoking MockTarget: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+# Helper function to verify Azurite is running
+function Test-AzuriteRunning {
+    Write-Host "    Verifying Azurite is accessible..." -ForegroundColor DarkGray
+    try {
+        Invoke-WebRequest -Uri "http://127.0.0.1:10000/devstoreaccount1" -Method Head -TimeoutSec 2 -ErrorAction Stop | Out-Null
+        Write-Host "    [OK] Azurite is running and accessible" -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "    [WARN] Azurite is not accessible: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+# Helper function to start Azurite in background
+function Start-AzuriteBackground {
+    Write-Host "`n  [INFO] Checking Azurite..." -ForegroundColor Cyan
+    
+    # First verify if Azurite is already running
+    if (Test-AzuriteRunning) {
+        Write-Host "    [OK] Azurite is already running" -ForegroundColor Green
+        return $null
+    }
+    
+    # Check if Azurite is installed
+    $azuriteCmd = Get-Command azurite -ErrorAction SilentlyContinue
+    if (-not $azuriteCmd) {
+        Write-Host "    [WARN] Azurite not found - blob storage will be simulated" -ForegroundColor Yellow
+        return $null
+    }
+    
+    Write-Host "    Starting Azurite in background..." -ForegroundColor Cyan
+    try {
+        $azuriteJob = Start-Job -ScriptBlock {
+            Set-Location $using:PSScriptRoot
+            azurite --silent 2>&1 | Out-Null
+        }
+        
+        # Wait for Azurite to start (check if port is listening)
+        $maxWait = 10
+        $waited = 0
+        while ($waited -lt $maxWait) {
+            if (Test-AzuriteRunning) {
+                Write-Host "    [OK] Azurite started successfully" -ForegroundColor Green
+                return $azuriteJob
+            }
+            Start-Sleep -Seconds 1
+            $waited++
+        }
+        
+        Write-Host "    [WARN] Azurite may not have started properly - blob storage may be simulated" -ForegroundColor Yellow
+        return $azuriteJob
+    } catch {
+        Write-Host "    [WARN] Could not start Azurite: $_" -ForegroundColor Yellow
+        return $null
+    }
+}
+
+# Helper function to verify Functions are running
+function Test-FunctionsRunning {
+    Write-Host "    Verifying Functions runtime is accessible..." -ForegroundColor DarkGray
+    try {
+        Invoke-WebRequest -Uri "http://localhost:7071" -Method Get -TimeoutSec 2 -ErrorAction Stop | Out-Null
+        Write-Host "    [OK] Functions runtime is running and accessible" -ForegroundColor Green
+        
+        # Also check if the HttpIngest endpoint is available
+        try {
+            Invoke-WebRequest -Uri "http://localhost:7071/api/HttpIngest" -Method Get -TimeoutSec 2 -ErrorAction Stop | Out-Null
+            Write-Host "    [OK] HttpIngest endpoint is available" -ForegroundColor Green
+        } catch {
+            Write-Host "    [INFO] HttpIngest endpoint may not be ready yet (this is normal)" -ForegroundColor DarkGray
+        }
+        
+        return $true
+    } catch {
+        Write-Host "    [WARN] Functions runtime is not accessible: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+# Helper function to start Functions in background
+function Start-FunctionsBackground {
+    Write-Host "`n  [INFO] Checking Azure Functions..." -ForegroundColor Cyan
+    
+    # First verify if Functions are already running
+    if (Test-FunctionsRunning) {
+        Write-Host "    [OK] Functions are already running on port 7071" -ForegroundColor Green
+        return $null
+    }
+    
+    # Check if func is installed
+    $funcCmd = Get-Command func -ErrorAction SilentlyContinue
+    if (-not $funcCmd) {
+        Write-Host "    [WARN] Azure Functions Core Tools not found - functions will be simulated" -ForegroundColor Yellow
+        return $null
+    }
+    
+    Write-Host "    Starting Functions runtime in background..." -ForegroundColor Cyan
+    try {
+        $functionsDir = Join-Path $PSScriptRoot "..\functions"
+        $functionsJob = Start-Job -ScriptBlock {
+            Set-Location $using:functionsDir
+            func start --port 7071 2>&1 | Out-Null
+        }
+        
+        # Wait for Functions to start
+        $maxWait = 30
+        $waited = 0
+        while ($waited -lt $maxWait) {
+            if (Test-FunctionsRunning) {
+                Write-Host "    [OK] Functions started successfully on port 7071" -ForegroundColor Green
+                Start-Sleep -Seconds 2  # Give it a moment to fully initialize
+                return $functionsJob
+            }
+            Start-Sleep -Seconds 1
+            $waited++
+        }
+        
+        Write-Host "    [WARN] Functions may not have started properly - functions will be simulated" -ForegroundColor Yellow
+        return $functionsJob
+    } catch {
+        Write-Host "    [WARN] Could not start Functions: $_" -ForegroundColor Yellow
+        return $null
+    }
+}
+
+# Helper function to stop background services
+function Stop-BackgroundServices {
+    param(
+        [System.Management.Automation.Job[]]$Jobs
+    )
+    
+    if ($Jobs -and $Jobs.Count -gt 0) {
+        Write-Host "`n  [INFO] Stopping background services..." -ForegroundColor Cyan
+        foreach ($job in $Jobs) {
+            if ($job -and $job.State -eq "Running") {
+                Stop-Job -Job $job -ErrorAction SilentlyContinue
+                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+            }
+        }
+        
+        # Also try to stop Azurite processes
+        $azuriteProcesses = Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { 
+            $_.CommandLine -like "*azurite*" 
+        }
+        if ($azuriteProcesses) {
+            $azuriteProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
+        }
+        
+        Write-Host "    [OK] Background services stopped" -ForegroundColor Green
+    }
+}
+
 # Main execution
 Write-Host "`n=================================================================================" -ForegroundColor Cyan
 Write-Host "                    DATA FLOW SIMULATION - Integration Pipeline Demo" -ForegroundColor White
 Write-Host "=================================================================================" -ForegroundColor Cyan
 
 # Check tools first
-$toolsOK = Test-RequiredTools
+Test-RequiredTools | Out-Null
+
+# Start local services if requested (default: true)
+if (-not $PSBoundParameters.ContainsKey('StartLocalServices')) {
+    $StartLocalServices = $true
+}
+
+# Start local services if requested
+$backgroundJobs = @()
+if ($StartLocalServices) {
+    Write-Host "`n=================================================================================" -ForegroundColor Cyan
+    Write-Host "                    Starting Local Services" -ForegroundColor White
+    Write-Host "=================================================================================" -ForegroundColor Cyan
+    
+    $azuriteJob = Start-AzuriteBackground
+    if ($azuriteJob) {
+        $backgroundJobs += $azuriteJob
+    }
+    
+    # Verify Azurite is running after starting
+    if (-not (Test-AzuriteRunning)) {
+        Write-Host "    [WARN] Azurite verification failed - blob storage operations will be simulated" -ForegroundColor Yellow
+    }
+    
+    $functionsJob = Start-FunctionsBackground
+    if ($functionsJob) {
+        $backgroundJobs += $functionsJob
+    }
+    
+    # Verify Functions are running after starting
+    if (-not (Test-FunctionsRunning)) {
+        Write-Host "    [WARN] Functions verification failed - function calls will be simulated" -ForegroundColor Yellow
+    }
+    
+    if ($backgroundJobs.Count -gt 0) {
+        Write-Host "`n  [INFO] Waiting for services to be ready..." -ForegroundColor Cyan
+        Start-Sleep -Seconds 3
+        
+        # Final verification
+        Write-Host "`n  [INFO] Final service verification..." -ForegroundColor Cyan
+        $azuriteReady = Test-AzuriteRunning
+        $functionsReady = Test-FunctionsRunning
+        
+        if ($azuriteReady -and $functionsReady) {
+            Write-Host "    [OK] All services are ready!" -ForegroundColor Green
+        } elseif ($azuriteReady) {
+            Write-Host "    [INFO] Azurite ready, Functions will run in mock mode" -ForegroundColor Yellow
+        } elseif ($functionsReady) {
+            Write-Host "    [INFO] Functions ready, Blob storage will run in mock mode" -ForegroundColor Yellow
+        } else {
+            Write-Host "    [INFO] Services will run in mock mode" -ForegroundColor Yellow
+        }
+    }
+}
 
 # Get deployment info with error handling
 Write-Step "Initializing pipeline connection..." 1 8
@@ -481,48 +823,160 @@ while ($retryCount -lt $maxRetries -and -not $success) {
         
         $success = $true
         
-        # Step 4: Service Bus Queue
+        # Reconstruct message for local processing
+        $messageForQueue = @{
+            id = $messageId
+            correlationId = $correlationId
+            timestamp = (Get-Date).ToUniversalTime().ToString("o")
+            source = "HttpIngest"
+            data = $vendorData
+        }
+        $messageJson = $messageForQueue | ConvertTo-Json -Depth 10 -Compress
+        
+        # Step 4: Service Bus Queue (Local Queue Simulation)
         Write-Step "Message queued in Service Bus 'inbound' queue..." 4 8
-        Write-Detail "Queue Name" "inbound"
+        $queueAdded = $false
+        if (Get-Command Add-QueueMessage -ErrorAction SilentlyContinue) {
+            try {
+                Add-QueueMessage -QueueName "inbound" -Message $messageJson
+                Write-Detail "Queue Name" "inbound (Local Queue)"
+                Write-Detail "Status" "Message queued successfully"
+                Write-Detail "Queue Count" "$(Get-QueueCount -QueueName 'inbound') messages"
+                $queueAdded = $true
+            } catch {
+                Write-Detail "Status" "Queue simulation failed, continuing..."
+            }
+        } else {
+            Write-Detail "Queue Name" "inbound (Simulated)"
+            Write-Detail "Status" "Queue simulation not available"
+        }
         Write-Detail "Message Format" "JSON"
         Write-Detail "Message Structure" "id, correlationId, timestamp, source, data"
-        Write-Detail "Queue Type" "Service Bus Standard Queue"
-        Write-Detail "TTL" "24 hours"
-        Write-Detail "Dead Letter" "Enabled"
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds 2
     
-        # Step 5: Service Bus Processor
+        # Step 5: Service Bus Processor (Real Execution)
         Write-Step "Service Bus Processor triggered - processing message..." 5 8
-        Write-Detail "Trigger Type" "Service Bus Queue Trigger"
-        Write-Detail "Function" "SbProcessor"
-        Write-Detail "Processing Action" "Parse JSON, extract data, add metadata"
+        $processorExecuted = $false
+        if ($queueAdded) {
+            $queueMessage = Get-QueueMessage -QueueName "inbound"
+            if ($queueMessage) {
+                Write-Detail "Trigger Type" "Service Bus Queue Trigger (Local)"
+                Write-Detail "Function" "SbProcessor"
+                
+                # Try to invoke SbProcessor function
+                $processorExecuted = Invoke-SbProcessorLocal -MessageJson $queueMessage -FunctionUrl $functionUrl
+                
+                if ($processorExecuted) {
+                    Write-Detail "Status" "SbProcessor executed successfully"
+                } else {
+                    # Simulate processing
+                    Write-Detail "Status" "SbProcessor simulated (function not available)"
+                    Write-Detail "Processing Action" "Parse JSON, extract data, add metadata"
+                }
+            } else {
+                Write-Detail "Status" "No message in queue"
+            }
+        } else {
+            Write-Detail "Status" "Simulated (no queue available)"
+            Write-Detail "Processing Action" "Parse JSON, extract data, add metadata"
+        }
         Write-Detail "Processor Metadata" "receivedAt, processedAt, processor name"
-        Start-Sleep -Seconds 3
-        
-        # Step 6: Blob Storage
+    Start-Sleep -Seconds 2
+    
+        # Step 6: Blob Storage (Real Execution with Azurite)
         Write-Step "Saving processed data to Azure Data Lake Storage Gen2..." 6 8
         $blobPath = "landing/vendors/$(Get-Date -Format 'yyyy/MM/dd')/$messageId.json"
-        Write-Detail "Storage Account" "Azure Storage Account"
+        
+        # Create processed data
+        $processedData = @{
+            messageId = $messageId
+            correlationId = $correlationId
+            receivedAt = $messageForQueue.timestamp
+            processedAt = (Get-Date).ToUniversalTime().ToString("o")
+            processor = "SbProcessor"
+            data = $vendorData
+        }
+        $processedDataJson = $processedData | ConvertTo-Json -Depth 10
+        
+        $blobSaved = Save-ToBlobStorage -MessageId $messageId -ProcessedDataJson $processedDataJson -CorrelationId $correlationId
+        
+        if ($blobSaved) {
+            Write-Detail "Storage Account" "Azurite (Local Emulator)"
+            Write-Detail "Status" "Blob saved successfully"
+        } else {
+            Write-Detail "Storage Account" "Azurite (Not Available)"
+            Write-Detail "Status" "Blob storage simulated"
+        }
         Write-Detail "Container" "landing"
         Write-Detail "Blob Path" $blobPath
         Write-Detail "File Format" "JSON"
         Write-Detail "Content" "Vendor data with processing metadata"
-        Write-Detail "Access Level" "Private"
-        Start-Sleep -Seconds 3
-        
-        # Step 7: Logic App
+    Start-Sleep -Seconds 2
+    
+        # Step 7: Logic App (Simulated - cannot run locally)
         Write-Step "Logic App workflow triggered - orchestrating data flow..." 7 8
         Write-Detail "Workflow" "Process and forward message"
         Write-Detail "Trigger" "Service Bus Queue (inbound)"
+        Write-Detail "Status" "Simulated (Logic Apps run only in Azure)"
         Write-Detail "Actions" "Parse message -> Forward to outbound -> Complete message"
-        Write-Detail "Target Queue" "outbound"
-        Write-Detail "Orchestration" "Managed by Azure Logic Apps"
-        Start-Sleep -Seconds 3
         
-        # Step 8: Final Delivery
+        # Simulate Logic App forwarding to outbound queue
+        if ($queueAdded -and (Get-Command Add-QueueMessage -ErrorAction SilentlyContinue)) {
+            try {
+                $outboundMessage = @{
+                    messageId = $messageId
+                    correlationId = $correlationId
+                    timestamp = (Get-Date).ToUniversalTime().ToString("o")
+                    source = "LogicApp"
+                    data = $vendorData
+                }
+                $outboundMessageJson = $outboundMessage | ConvertTo-Json -Depth 10 -Compress
+                Add-QueueMessage -QueueName "outbound" -Message $outboundMessageJson
+                Write-Detail "Target Queue" "outbound (Message forwarded)"
+            } catch {
+                Write-Detail "Target Queue" "outbound (Simulated)"
+            }
+        } else {
+            Write-Detail "Target Queue" "outbound (Simulated)"
+        }
+        Write-Detail "Orchestration" "Managed by Azure Logic Apps"
+    Start-Sleep -Seconds 2
+    
+        # Step 8: Final Delivery (Real Execution)
         Write-Step "Message delivered to target system..." 8 8
-        Write-Detail "Target System" "Mock Target Function"
-        Write-Detail "Delivery Status" "Success"
+        $targetExecuted = $false
+        
+        if ($queueAdded -and (Get-Command Get-QueueMessage -ErrorAction SilentlyContinue)) {
+            $outboundMessage = Get-QueueMessage -QueueName "outbound"
+            if ($outboundMessage) {
+                Write-Detail "Target System" "Mock Target Function"
+                $targetExecuted = Invoke-MockTargetLocal -MessageJson $outboundMessage -FunctionUrl $functionUrl
+                
+                if ($targetExecuted) {
+                    Write-Detail "Delivery Status" "Success (Function executed)"
+                } else {
+                    Write-Detail "Delivery Status" "Success (Simulated)"
+                }
+            } else {
+                Write-Detail "Target System" "Mock Target Function"
+                Write-Detail "Delivery Status" "Success (Simulated)"
+            }
+        } else {
+            Write-Detail "Target System" "Mock Target Function"
+            Write-Detail "Delivery Status" "Success (Simulated)"
+        }
+        
+        $executionSummary = @()
+        if ($processorExecuted) { $executionSummary += "SbProcessor" }
+        if ($blobSaved) { $executionSummary += "BlobStorage" }
+        if ($targetExecuted) { $executionSummary += "MockTarget" }
+        
+        if ($executionSummary.Count -gt 0) {
+            Write-Detail "Real Execution" ($executionSummary -join ", ")
+        } else {
+            Write-Detail "Real Execution" "None (all simulated)"
+        }
+        
         Write-Detail "End-to-End Time" "~$($DelaySeconds * 8) seconds"
         Write-Detail "Data Integrity" "Maintained (Correlation ID preserved)"
         
@@ -572,3 +1026,17 @@ Write-Host "`n==================================================================
 Write-Host "                         Simulation completed successfully!" -ForegroundColor White
 Write-Host "=================================================================================" -ForegroundColor Green
 Write-Host ""
+
+# Stop background services if requested
+if ($StopLocalServices -and $backgroundJobs.Count -gt 0) {
+    Stop-BackgroundServices -Jobs $backgroundJobs
+} elseif ($backgroundJobs.Count -gt 0) {
+    Write-Host "  [INFO] Background services are still running:" -ForegroundColor Cyan
+    foreach ($job in $backgroundJobs) {
+        if ($job -and $job.State -eq "Running") {
+            Write-Host "    - Job ID $($job.Id) (State: $($job.State))" -ForegroundColor Gray
+        }
+    }
+    Write-Host "`n  To stop them manually, use: Get-Job | Stop-Job; Get-Job | Remove-Job" -ForegroundColor DarkGray
+    Write-Host ""
+}
