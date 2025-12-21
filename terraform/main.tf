@@ -144,12 +144,27 @@ data "azurerm_servicebus_namespace_authorization_rule" "root" {
   namespace_id = azurerm_servicebus_namespace.main.id
 }
 
-# Application Insights
+# Log Analytics Workspace
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "${lower(local.resource_prefix)}-law"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+
+  tags = {
+    Environment = var.environment_name
+    Project     = var.project_name
+  }
+}
+
+# Application Insights (linked to Log Analytics Workspace)
 resource "azurerm_application_insights" "main" {
   name                = "${local.resource_prefix}-insights"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
   application_type    = "web"
+  workspace_id        = azurerm_log_analytics_workspace.main.id
 
   tags = {
     Environment = var.environment_name
@@ -346,6 +361,22 @@ resource "azurerm_logic_app_workflow" "main" {
   depends_on = [azurerm_api_connection.servicebus]
 }
 
+# Diagnostic Settings for Logic App - sends Run History to Log Analytics Workspace
+resource "azurerm_monitor_diagnostic_setting" "logic_app" {
+  name                       = "${lower(local.resource_prefix)}-logicapp-diag"
+  target_resource_id         = azurerm_logic_app_workflow.main.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  enabled_log {
+    category = "WorkflowRuntime"
+  }
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+}
+
 # Note: Logic App workflow definition should be configured via Azure Portal or CLI after creation
 # The Logic App resource is created here, but the workflow definition needs to be set separately
 
@@ -399,5 +430,15 @@ output "app_insights_instrumentation_key" {
   value       = azurerm_application_insights.main.instrumentation_key
   description = "Instrumentation key for Application Insights"
   sensitive   = true
+}
+
+output "log_analytics_workspace_id" {
+  value       = azurerm_log_analytics_workspace.main.id
+  description = "ID of the Log Analytics Workspace"
+}
+
+output "log_analytics_workspace_name" {
+  value       = azurerm_log_analytics_workspace.main.name
+  description = "Name of the Log Analytics Workspace"
 }
 
