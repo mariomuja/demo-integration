@@ -40,3 +40,4 @@ Or via Azure Portal:
 
 The workflow requires a Service Bus connection parameter (`$connections`) which is automatically configured when the Logic App is created with the Service Bus API connection.
 
+

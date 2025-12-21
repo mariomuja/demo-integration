@@ -1,0 +1,73 @@
+@startuml
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam sequenceArrowThickness 2
+skinparam roundcorner 10
+
+title Data Flow Sequence Diagram - Integration Pipeline
+
+actor Client
+participant "API Management\n(APIM)" as APIM
+participant "HTTP Ingest\nFunction" as HttpIngest
+participant "Service Bus\n(inbound queue)" as SBInbound
+participant "SB Processor\nFunction" as SBProcessor
+participant "Azure Storage\n(Blob)" as Storage
+participant "Logic App\nWorkflow" as LogicApp
+participant "Service Bus\n(outbound queue)" as SBOutbound
+participant "Mock Target\nFunction" as MockTarget
+participant "Application Insights" as AppInsights
+
+Client -> APIM: POST /vendor-ingest/vendors\n(HTTPS + JWT)
+activate APIM
+APIM -> APIM: Validate JWT Token
+APIM -> HttpIngest: POST /api/HttpIngest\n(Rewrite URI)
+activate HttpIngest
+
+HttpIngest -> HttpIngest: Generate Message ID\nGenerate Correlation ID\nAdd Metadata
+HttpIngest -> SBInbound: Send Message\n(JSON with metadata)
+activate SBInbound
+HttpIngest -> Client: HTTP 202 Accepted\n(messageId, correlationId)
+deactivate HttpIngest
+deactivate APIM
+
+SBInbound -> SBProcessor: Trigger Function\n(Queue Message)
+activate SBProcessor
+SBProcessor -> SBProcessor: Parse JSON\nExtract Data\nAdd Processing Metadata
+SBProcessor -> Storage: Save to Blob\nlanding/vendors/YYYY/MM/DD/{id}.json
+activate Storage
+Storage --> SBProcessor: Blob Saved
+deactivate Storage
+deactivate SBProcessor
+
+SBInbound -> LogicApp: Trigger Workflow\n(Queue Message)
+activate LogicApp
+LogicApp -> LogicApp: Parse Message\nExtract Data
+LogicApp -> SBOutbound: Forward Message\n(Processed Data)
+activate SBOutbound
+LogicApp -> SBInbound: Complete Message\n(Mark as processed)
+deactivate LogicApp
+
+SBOutbound -> MockTarget: Trigger Function\n(Queue Message)
+activate MockTarget
+MockTarget -> MockTarget: Process Data\nValidate Format
+MockTarget -> AppInsights: Log Telemetry\n(Correlation ID preserved)
+activate AppInsights
+MockTarget --> SBOutbound: Processing Complete
+deactivate MockTarget
+deactivate SBOutbound
+deactivate SBInbound
+
+note right of Client
+  Correlation ID preserved
+  throughout entire flow
+  for end-to-end tracing
+end note
+
+note right of AppInsights
+  All components log
+  to Application Insights
+  with Correlation ID
+end note
+
+@enduml
+

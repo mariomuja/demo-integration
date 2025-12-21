@@ -1,0 +1,48 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title C4 Container Diagram - Azure Integration Demo
+
+Person(client, "External Client", "Sends vendor data via REST API")
+
+System_Boundary(azure, "Azure Cloud") {
+    System(apim, "API Management", "Manages API access, JWT validation, rate limiting")
+    
+    Container_Boundary(function_app, "Function App") {
+        Component(http_ingest, "HTTP Ingest", "Azure Function", "Receives HTTP requests, validates data, sends to Service Bus")
+        Component(sb_processor, "SB Processor", "Azure Function", "Processes messages from inbound queue, saves to storage")
+        Component(mock_target, "Mock Target", "Azure Function", "Receives processed data from outbound queue")
+    }
+    
+    Container(service_bus, "Service Bus", "Azure Service Bus", "Message queuing service with inbound and outbound queues")
+    
+    Container(logic_app, "Logic App", "Azure Logic Apps", "Orchestrates workflow: parses messages, forwards to outbound queue")
+    
+    Container(storage, "Blob Storage", "Azure Storage Account", "Stores processed vendor data in landing zone")
+    
+    Container(app_insights, "Application Insights", "Azure Application Insights", "Collects telemetry, logs, and metrics from all components")
+    
+    ContainerDb(log_analytics, "Log Analytics", "Azure Log Analytics Workspace", "Stores logs and enables KQL queries")
+}
+
+Rel(client, apim, "HTTPS", "REST API")
+Rel(apim, http_ingest, "HTTP", "Internal routing")
+Rel(http_ingest, service_bus, "Send Message", "inbound queue")
+Rel(service_bus, sb_processor, "Trigger", "Queue trigger")
+Rel(service_bus, logic_app, "Trigger", "Queue trigger")
+Rel(sb_processor, storage, "Write", "Blob storage")
+Rel(logic_app, service_bus, "Send Message", "outbound queue")
+Rel(service_bus, mock_target, "Trigger", "Queue trigger")
+Rel(http_ingest, app_insights, "Logs", "Telemetry")
+Rel(sb_processor, app_insights, "Logs", "Telemetry")
+Rel(mock_target, app_insights, "Logs", "Telemetry")
+Rel(logic_app, app_insights, "Logs", "Run History")
+Rel(app_insights, log_analytics, "Stores", "Logs and metrics")
+
+SHOW_LEGEND()
+
+@enduml
+

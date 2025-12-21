@@ -1,0 +1,118 @@
+﻿
+=================================================================================
+                    DATA FLOW SIMULATION - Integration Pipeline Demo
+=================================================================================
+
+=================================================================================
+                    Checking Required Tools and Dependencies
+=================================================================================
+
+  Checking PowerShell...
+    [OK] PowerShell 5.1 - OK
+  Checking Azure CLI...
+    [OK] Azure CLI installed
+      Version: 2.79.0
+      Note: Required for Azure deployments
+  Checking Azure Functions Core Tools...
+    [OK] Azure Functions Core Tools installed
+      Version: 4.5.0
+      Note: Required for local Function development
+  Checking Azurite Storage Emulator...
+    [OK] Azurite installed
+      Note: Optional - provides local blob storage emulation
+  Checking Node.js/npm...
+    [OK] Node.js installed
+      Version: v24.11.0
+      Note: Optional - needed for Azurite installation
+
+  [OK] All required tools are available!
+    The script will run in mock mode if Functions are not available.
+
+
++-----------------------------------------------------------------------------+
+| STEP 1/8                      Initializing pipeline connection... |
++-----------------------------------------------------------------------------+
+    - Mode: Azure Cloud
+    - Resource Group: rg-demo-integration-20251217-095039
+  [WARN] Function App not found. Using local mode...
+    - Mode: Local Development (Fallback)
+
++-----------------------------------------------------------------------------+
+| STEP 2/8                         Preparing vendor data payload... |
++-----------------------------------------------------------------------------+
+    - Vendor ID: VENDOR-DEMO-001
+    - Vendor Name: Demo Vendor Corporation
+    - Email: demo@vendor.com
+    - Correlation ID: 54cc2f61-6324-47e1-b872-0b2f7ffd528e
+    - Message ID: a29a7b28-9fff-4dfb-bb2b-ba4c44706db8
+    - Timestamp: 2025-12-21T13:04:10.7195272Z
+    - Payload Size: 501 bytes
+
++-----------------------------------------------------------------------------+
+| STEP 3/8             Sending HTTP POST request to Function App... |
++-----------------------------------------------------------------------------+
+    - Endpoint: http://localhost:7071/api/HttpIngest
+    - Method: POST
+    - Content-Type: application/json
+    - Header: x-correlation-id: 54cc2f61-6324-47e1-b872-0b2f7ffd528e
+  -> Sending HTTP request...
+  [WARN] Functions not available - running in mock mode...
+    - Mode: Mock (Functions Runtime not available)
+    - Simulated Message ID: a29a7b28-9fff-4dfb-bb2b-ba4c44706db8
+
++-----------------------------------------------------------------------------+
+| STEP 4/8         Message queued in Service Bus 'inbound' queue... |
++-----------------------------------------------------------------------------+
+    - Queue Name: inbound
+    - Message Format: JSON
+    - Message Structure: id, correlationId, timestamp, source, data
+    - Queue Type: Service Bus Standard Queue
+    - TTL: 24 hours
+    - Dead Letter: Enabled
+
++-----------------------------------------------------------------------------+
+| STEP 5/8  Service Bus Processor triggered - processing message... |
++-----------------------------------------------------------------------------+
+    - Trigger Type: Service Bus Queue Trigger
+    - Function: SbProcessor
+    - Processing Action: Parse JSON, extract data, add metadata
+    - Processor Metadata: receivedAt, processedAt, processor name
+
++-----------------------------------------------------------------------------+
+| STEP 6/8 Saving processed data to Azure Data Lake Storage Gen2... |
++-----------------------------------------------------------------------------+
+    - Storage Account: Azure Storage Account
+    - Container: landing
+    - Blob Path: landing/vendors/2025.12.21/a29a7b28-9fff-4dfb-bb2b-ba4c44706db8.json
+    - File Format: JSON
+    - Content: Vendor data with processing metadata
+    - Access Level: Private
+
++-----------------------------------------------------------------------------+
+| STEP 7/8Logic App workflow triggered - orchestrating data flow... |
++-----------------------------------------------------------------------------+
+    - Workflow: Process and forward message
+    - Trigger: Service Bus Queue (inbound)
+    - Actions: Parse message -> Forward to outbound -> Complete message
+    - Target Queue: outbound
+    - Orchestration: Managed by Azure Logic Apps
+
++-----------------------------------------------------------------------------+
+| STEP 8/8                    Message delivered to target system... |
++-----------------------------------------------------------------------------+
+    - Target System: Mock Target Function
+    - Delivery Status: Success
+    - End-to-End Time: ~40 seconds
+    - Data Integrity: Maintained (Correlation ID preserved)
+
+  [OK] [PIPELINE] Data successfully processed end-to-end!
+      - Correlation ID: 54cc2f61-6324-47e1-b872-0b2f7ffd528e
+      - Total Steps: 8
+      - Message ID: a29a7b28-9fff-4dfb-bb2b-ba4c44706db8
+      - Message Traced: Yes
+
+=================================================================================
+                         Simulation completed successfully!
+=================================================================================
+
+
