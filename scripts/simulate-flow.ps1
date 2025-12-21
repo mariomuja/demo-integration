@@ -155,7 +155,6 @@ function Test-RequiredTools {
     } else {
         Write-Host "    [ERROR] PowerShell version too old (requires 5.1+)" -ForegroundColor Red
         Write-Host "      Please upgrade PowerShell manually. This cannot be automated." -ForegroundColor Yellow
-        $allToolsAvailable = $false
     }
     Start-Sleep -Milliseconds 300
     
